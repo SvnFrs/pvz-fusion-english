@@ -119,6 +119,12 @@ This language team has a detailed contribution report :
 ## Notice to Translators
 The translator mod, `PvZ_Fusion_Translator.dll`, is open source, the repo can be found [here](https://github.com/Teyliu/PVZFusionTranslation). But you can grab the latest build on the root directory of this repo's main branch. It is constantly updated.
 
+### What's left to translate
+
+[**Docs/translation-audit**](./Docs/translation-audit/) maps every Chinese string still in the game (3.8.1) and scores all 18 languages against it. Each language has a ready-to-fill work list at `Docs/translation-audit/missing_by_locale/<Language>.json`, ordered so the most frequently shown text comes first.
+
+Worth knowing: most of the remaining text is **not** in the almanac, which is 100% done in English. It is in the game's code — tutorials, mode rules and unlock popups — which the mod only ever revealed one line at a time as you happened to walk past it in game. About 1,560 of those still have no English translation. Anything added to `translation_strings.json` ships to both PC and Android.
+
 ## Instructions on Using the Scripts in [`Useful Scripts`](https://github.com/Teyliu/PVZF-Translation/tree/main/Useful%20Scripts)
 
 There are 4 Python scripts.

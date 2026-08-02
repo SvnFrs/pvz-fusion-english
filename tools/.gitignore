@@ -1,0 +1,6 @@
+.venv/
+android/vendor/
+dist/
+work/
+**/dist/
+**/work/
