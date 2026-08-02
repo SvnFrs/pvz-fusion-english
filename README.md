@@ -12,30 +12,40 @@ APK ahead of time. No root, no mod loader, no PC required to play.
 
 ## Download
 
-| What | Platform | Where |
-| --- | --- | --- |
-| **English APK — game version 3.8.1** | Android | [Releases](../../releases) |
-| **English / multi-language build** | PC (Windows) | [Releases](../../releases) |
-| Chinese original (needed only if you build it yourself) | PC / Android | see the community links below |
+| What | Where |
+| --- | --- |
+| **Almanac** — every plant and zombie, searchable, offline | [Releases](../../releases) |
+| **English APK / PC build** | build it yourself — one command, see below |
 
-> **Android: check the signature before you update.** An APK can only install over
-> an existing one if both were signed with the same key. If the release notes say
-> the signing key changed, you must uninstall first — and on Android that
-> **deletes your save**. Every release states which key it used.
+This project does **not** redistribute the game. A playable build is the Chinese
+game with the translation patched into it, so shipping one would mean shipping
+蓝飘飘fly's work. Instead you bring your own copy of the Chinese release and the
+tools patch it locally, in about a minute. The almanac is pure translation text
+and carries no game data, so that one is a direct download.
 
-### Installing on Android
+For a ready-made build, the community distributes them —
+[Teyliu/PVZF-Translation](https://github.com/Teyliu/PVZF-Translation/releases)
+for PC, and the [Discord](https://discord.gg/DPAC5ZVJ8T) for Android.
 
-1. Download the APK from [Releases](../../releases).
-2. Allow installs from your browser or file manager
-   (Settings → Apps → *your browser* → Install unknown apps).
-3. Open the APK and install. If you already have an English build from this repo,
-   it updates in place and keeps your save.
+### Building and installing on Android
 
-### Installing on PC
+```bash
+python tools/bootstrap.py
+tools/.venv/Scripts/python.exe tools/android/build_apk.py \
+    --apk APKs/pvzrh3.8.1.apk --lang English --out dist \
+    --compose-names --textures
+```
 
-Extract anywhere **outside** OneDrive, Desktop, or a Documents/Downloads folder,
-avoid non-ASCII characters in the path, and launch with
-`Launch Game (Multilang).bat`.
+Then allow installs from your file manager (Settings → Apps → *your browser* →
+Install unknown apps) and open the APK. Sign every build with the same key and
+updates install in place, keeping your save — see
+[`tools/android/signing/`](./tools/android/signing/).
+
+### Building and installing on PC
+
+`tools/pc/build_pc.py` assembles the release. Extract it anywhere **outside**
+OneDrive, Desktop, or a Documents/Downloads folder, avoid non-ASCII characters in
+the path, and launch with `Launch Game (Multilang).bat`.
 
 ---
 

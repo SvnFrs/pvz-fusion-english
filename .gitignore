@@ -416,3 +416,6 @@ PvZ_Fusion_Translator/Localization/English/Strings/deleted_iz.json
 # Local staging for game builds fed to tools/ - never committed (hundreds of MB each)
 /APKs/
 /PCs/
+
+# Third-party almanac download kept locally for comparison (148 MB)
+/Almanac for PvZ Fusion*.html

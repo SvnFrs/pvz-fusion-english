@@ -4,3 +4,9 @@ dist/
 work/
 **/dist/
 **/work/
+
+# Release signing material. NEVER commit these - the keystore is the only thing
+# that lets you ship an update without every user losing their save.
+android/signing/*.jks
+android/signing/*.keystore
+android/signing/*password*
