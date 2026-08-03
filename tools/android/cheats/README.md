@@ -41,13 +41,9 @@ API (all 18 functions this script needs), so `pvzf-cheats.js` is self-contained.
 frida -U -f com.LanPiaoPiao.PlantsVsZombiesRH -l pvzf-cheats.js
 ```
 
-It runs a **read-only discovery pass** first and prints the class that owns
-`CheckCheatCodes`, its callable zero-argument methods, and its fields. Read that
-before invoking anything — the script reports real signatures rather than
-assuming them.
-
-On start it hooks input, runs a read-only discovery pass, and prints what it
-found. Then, from the REPL:
+On start it hooks input, then runs a **read-only discovery pass** that prints the
+class owning `CheckCheatCodes`, its callable zero-argument methods and its
+fields — real signatures, not assumed ones. Then, from the REPL:
 
 ```js
 press("Y")     // clear zombies   (U plants, O random seeds, I place vase)
@@ -71,18 +67,20 @@ data. Repacking to inject a loader re-signs the APK, which means uninstalling,
 which on Android means losing the save — the exact thing the permanent key in
 [`../signing/`](../signing/) exists to avoid.
 
-## Routing it to an on-screen button
+## How the on-screen panel works
 
-Three ways, cheapest first:
+`ui()` walks `ActivityThread` for the resumed Activity and calls
+`addContentView` on it, adding a `LinearLayout` of buttons **inside the game's
+own view hierarchy**. Because it is a child view and not a
+`TYPE_APPLICATION_OVERLAY`, no `SYSTEM_ALERT_WINDOW` permission is needed —
+which is worth knowing, since that permission is an appop and is awkward to grant
+even with root.
 
-1. **Spoof the key.** Hook `UnityEngine.Input.GetKeyDown` and return `true` for
-   the cheat key when a flag is set. The game's own handler does the rest, so
-   there is no need to understand what the cheat methods do internally.
-2. **A floating overlay.** Frida can call Java APIs, so you can add an Android
-   `TYPE_APPLICATION_OVERLAY` view with buttons that call into the methods above.
-   This is a real on-screen menu with no native code and no ImGui.
-3. **Patch the game's UI.** Rebinding an in-game button means editing ARM64 code
-   in `libil2cpp.so`. Not worth it while 1 and 2 exist.
+Each button calls `press(key)`, so the panel and the REPL drive the same path.
+Adding a cheat is one entry in the `KEYS` table at the top of the script.
+
+The remaining option — rebinding an actual in-game button — means editing ARM64
+code in `libil2cpp.so`, and is not worth it while the above works.
 
 ## What about ImGui, MelonLoader, or the prebuilt cheat APKs?
 
