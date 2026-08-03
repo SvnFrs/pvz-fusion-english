@@ -28,7 +28,43 @@ That also makes the first run the test. If `press("Y")` clears the zombies, the
 cheat paths are live on Android. If it does nothing, they are compiled in but
 inert, and no menu of any kind would have helped.
 
-## Just install and play (no PC, no root)
+## Status: the embedded-gadget route does not work
+
+**Tested on Android 13, rooted, and it fails.** Recorded here so nobody repeats
+it. The APK builds, installs, and the game plays normally — but the script never
+runs. It writes a log at parse time, and across two builds no log was ever
+created.
+
+What the symptoms prove, in order:
+
+- the game **launches**, so `libfrida-gadget.so` loaded — a missing DT_NEEDED
+  dependency would fail the linker and the app would not start;
+- it does **not hang**, so Gadget read `libfrida-gadget.config.so` and entered
+  script mode — with no config it defaults to Listen and blocks at startup;
+- yet **no parse-time log appears**, so the script never executed.
+
+The most likely cause is the loading method. With DT_NEEDED the gadget's
+constructor runs *inside the dynamic linker*, holding the linker lock, while
+Gadget's own startup spawns threads and calls `dlopen`. Every working Android
+gadget injector instead adds `System.loadLibrary("frida-gadget")` from Java, by
+rewriting `classes.dex` — which is also what
+[SvnFrs/revenant](https://github.com/SvnFrs/revenant) does successfully on the
+same device.
+
+### What to use instead
+
+**GameGuardian on the plain translated APK.** The game has **no anti-tamper** —
+no root detection, no signature check, no integrity verification anywhere in the
+metadata or identifier tables — so a memory editor works unimpeded and needs no
+APK modification at all. Use
+`dist/pvzf-<version>-english.apk`, not the `-cheats` build; both carry the same
+signing key, so swapping between them keeps your save.
+
+Rewriting `classes.dex` to call `System.loadLibrary` is the route that would
+make the embedded approach work, and is the obvious next attempt if anyone wants
+the button panel rather than a memory editor.
+
+## The embedded-gadget build (kept for reference)
 
 `embed_cheats.py` bakes the script into the APK, so there is nothing to attach
 to and nothing to run each session — install it, launch the game, the buttons
