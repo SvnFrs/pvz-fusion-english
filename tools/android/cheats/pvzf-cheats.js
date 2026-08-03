@@ -3,28 +3,44 @@
  *
  *   frida -U -f com.LanPiaoPiao.PlantsVsZombiesRH -l pvzf-cheats.js
  *
- * The game already contains its cheats — `CheckCheatCodes` reads a `keyCodes`
- * array and fires them. On desktop you press Y / U / O / I. A phone has no
- * keyboard, so the code is present but unreachable. This reaches it directly.
+ * The game already contains its cheats. `CheckCheatCodes` reads a `keyCodes`
+ * array and fires them; on desktop you press Y / U / O / I. A phone has no
+ * keyboard, so the code is present but unreachable.
  *
- * Nothing here modifies the APK. The installed build keeps its signature and
- * your save, which is the main reason to prefer this over repacking.
+ * This does not add cheats. It gives the existing ones an input path, two ways:
  *
- * `libil2cpp.so` exports the full IL2CPP C API, so everything below is resolved
- * by *name* at runtime. That is deliberate: a game update moves every address
- * but rarely renames a method, so this should survive version bumps.
+ *   1. key spoofing — `UnityEngine.Input.GetKeyDown` is hooked so a chosen key
+ *      reads as pressed for exactly one frame, on demand. The game's own
+ *      handler does everything else, so nothing here depends on knowing what
+ *      the cheat code actually does internally.
+ *   2. on-screen buttons — a small panel added to the game's own Activity that
+ *      triggers (1). Added as a child of the existing view, not a system
+ *      overlay, so it needs no extra permission.
  *
- * Run it once and read the report before invoking anything — the discovery pass
- * is read-only, and it prints the real signatures rather than assuming them.
+ * The APK is never modified: your installed build keeps its signature and its
+ * save. Everything resolves by *name* through the IL2CPP C API that
+ * `libil2cpp.so` exports, so a game update that moves every address should not
+ * break this.
  */
 
 'use strict';
 
 const LIB = 'libil2cpp.so';
 
-/* ---------- binding the IL2CPP C API ---------------------------------- */
+/* Unity's KeyCode enum matches ASCII for lowercase letters. */
+const KEYS = {
+  Y: { code: 121, label: 'Clear Zombies' },
+  U: { code: 117, label: 'Clear Plants' },
+  O: { code: 111, label: 'Random Seeds' },
+  I: { code: 105, label: 'Place Vase' },
+};
 
 let il2cpp = null;
+let attached = false;
+/* Keys queued to read as "pressed". Consumed by the first matching call. */
+const oneShot = new Set();
+
+/* ---------- IL2CPP C API ---------------------------------------------- */
 
 function bind() {
   const need = (name, ret, args) => {
@@ -33,35 +49,30 @@ function bind() {
     return new NativeFunction(addr, ret, args);
   };
   return {
-    domain_get:            need('il2cpp_domain_get', 'pointer', []),
-    domain_get_assemblies: need('il2cpp_domain_get_assemblies', 'pointer', ['pointer', 'pointer']),
-    assembly_get_image:    need('il2cpp_assembly_get_image', 'pointer', ['pointer']),
-    image_get_class_count: need('il2cpp_image_get_class_count', 'size_t', ['pointer']),
-    image_get_class:       need('il2cpp_image_get_class', 'pointer', ['pointer', 'size_t']),
-    class_get_name:        need('il2cpp_class_get_name', 'pointer', ['pointer']),
-    class_get_namespace:   need('il2cpp_class_get_namespace', 'pointer', ['pointer']),
-    class_get_methods:     need('il2cpp_class_get_methods', 'pointer', ['pointer', 'pointer']),
-    class_get_fields:      need('il2cpp_class_get_fields', 'pointer', ['pointer', 'pointer']),
-    method_get_name:       need('il2cpp_method_get_name', 'pointer', ['pointer']),
-    method_get_param_count:need('il2cpp_method_get_param_count', 'uint32', ['pointer']),
-    field_get_name:        need('il2cpp_field_get_name', 'pointer', ['pointer']),
-    runtime_invoke:        need('il2cpp_runtime_invoke', 'pointer', ['pointer','pointer','pointer','pointer']),
-    thread_attach:         need('il2cpp_thread_attach', 'pointer', ['pointer']),
-    method_from_name:      need('il2cpp_class_get_method_from_name', 'pointer', ['pointer','pointer','int']),
+    domain_get:             need('il2cpp_domain_get', 'pointer', []),
+    domain_get_assemblies:  need('il2cpp_domain_get_assemblies', 'pointer', ['pointer', 'pointer']),
+    assembly_get_image:     need('il2cpp_assembly_get_image', 'pointer', ['pointer']),
+    image_get_class_count:  need('il2cpp_image_get_class_count', 'size_t', ['pointer']),
+    image_get_class:        need('il2cpp_image_get_class', 'pointer', ['pointer', 'size_t']),
+    class_get_name:         need('il2cpp_class_get_name', 'pointer', ['pointer']),
+    class_get_namespace:    need('il2cpp_class_get_namespace', 'pointer', ['pointer']),
+    class_get_methods:      need('il2cpp_class_get_methods', 'pointer', ['pointer', 'pointer']),
+    class_get_fields:       need('il2cpp_class_get_fields', 'pointer', ['pointer', 'pointer']),
+    method_get_name:        need('il2cpp_method_get_name', 'pointer', ['pointer']),
+    method_get_param_count: need('il2cpp_method_get_param_count', 'uint32', ['pointer']),
+    field_get_name:         need('il2cpp_field_get_name', 'pointer', ['pointer']),
+    runtime_invoke:         need('il2cpp_runtime_invoke', 'pointer', ['pointer','pointer','pointer','pointer']),
+    thread_attach:          need('il2cpp_thread_attach', 'pointer', ['pointer']),
+    method_from_name:       need('il2cpp_class_get_method_from_name', 'pointer', ['pointer','pointer','int']),
   };
 }
 
-const str = p => (p.isNull() ? '<null>' : p.readUtf8String());
+const str = p => (p.isNull() ? '' : p.readUtf8String());
 
 /** Frida's thread is not a managed thread; calling in without attaching crashes. */
-let attached = false;
 function attach() {
-  if (attached) return;
-  il2cpp.thread_attach(il2cpp.domain_get());
-  attached = true;
+  if (!attached) { il2cpp.thread_attach(il2cpp.domain_get()); attached = true; }
 }
-
-/* ---------- walking the loaded assemblies ------------------------------ */
 
 function eachClass(visit) {
   const countBuf = Memory.alloc(Process.pointerSize);
@@ -70,17 +81,21 @@ function eachClass(visit) {
   for (let i = 0; i < n; i++) {
     const image = il2cpp.assembly_get_image(assemblies.add(i * Process.pointerSize).readPointer());
     if (image.isNull()) continue;
-    const classes = il2cpp.image_get_class_count(image);
-    for (let c = 0; c < classes; c++) {
+    const total = il2cpp.image_get_class_count(image);
+    for (let c = 0; c < total; c++) {
       const klass = il2cpp.image_get_class(image, c);
-      if (!klass.isNull()) visit(klass);
+      if (!klass.isNull() && visit(klass) === false) return;
     }
   }
 }
 
+function fullName(klass) {
+  const ns = str(il2cpp.class_get_namespace(klass));
+  return (ns ? ns + '.' : '') + str(il2cpp.class_get_name(klass));
+}
+
 function methodsOf(klass) {
-  const iter = Memory.alloc(Process.pointerSize);
-  iter.writePointer(NULL);
+  const iter = Memory.alloc(Process.pointerSize); iter.writePointer(NULL);
   const out = [];
   for (;;) {
     const m = il2cpp.class_get_methods(klass, iter);
@@ -91,8 +106,7 @@ function methodsOf(klass) {
 }
 
 function fieldsOf(klass) {
-  const iter = Memory.alloc(Process.pointerSize);
-  iter.writePointer(NULL);
+  const iter = Memory.alloc(Process.pointerSize); iter.writePointer(NULL);
   const out = [];
   for (;;) {
     const f = il2cpp.class_get_fields(klass, iter);
@@ -102,9 +116,118 @@ function fieldsOf(klass) {
   return out;
 }
 
-/* ---------- discovery -------------------------------------------------- */
+function findClass(name) {
+  let hit = null;
+  eachClass(k => { if (fullName(k) === name) { hit = k; return false; } });
+  return hit;
+}
 
-// Names found in this build's metadata. Anything matching gets reported.
+/* ---------- 1. key spoofing -------------------------------------------- */
+
+/*
+ * A MethodInfo begins with its native code pointer, so *MethodInfo is the
+ * address to hook. Static methods are compiled as
+ *   ret f(args..., const MethodInfo*)
+ * so for GetKeyDown(KeyCode) the key arrives as args[0].
+ */
+function hookInput() {
+  attach();
+  const klass = findClass('UnityEngine.Input');
+  if (klass === null) { console.log('[!] UnityEngine.Input not found'); return false; }
+
+  let hooked = 0;
+  for (const name of ['GetKeyDown', 'GetKeyUp', 'GetKey']) {
+    const m = il2cpp.method_from_name(klass, Memory.allocUtf8String(name), 1);
+    if (m.isNull()) continue;
+    const code = m.readPointer();
+    if (code.isNull()) continue;
+    try {
+      Interceptor.attach(code, {
+        onEnter(args) { this.key = args[0].toInt32(); },
+        onLeave(retval) {
+          // GetKey is held-state; GetKeyDown/Up are edges. One frame is enough
+          // for all three, and consuming the flag keeps it to a single press.
+          if (oneShot.has(this.key)) { oneShot.delete(this.key); retval.replace(ptr(1)); }
+        },
+      });
+      hooked++;
+    } catch (e) {
+      console.log(`[!] could not hook Input.${name}: ${e.message}`);
+    }
+  }
+  console.log(hooked ? `[+] input hooked (${hooked} method(s))` : '[!] no input methods hooked');
+  return hooked > 0;
+}
+
+/** Queue a single synthetic press, e.g. press('Y'). */
+function press(key) {
+  const k = KEYS[String(key).toUpperCase()];
+  if (!k) { console.log(`[!] unknown key ${key}; known: ${Object.keys(KEYS).join(', ')}`); return; }
+  oneShot.add(k.code);
+  console.log(`[+] queued ${String(key).toUpperCase()} — ${k.label}`);
+}
+
+/* ---------- 2. on-screen buttons --------------------------------------- */
+
+/*
+ * Added to the Activity's own content view rather than as a system overlay, so
+ * no SYSTEM_ALERT_WINDOW permission is involved.
+ */
+function buildUI() {
+  if (!Java.available) { console.log('[!] Java runtime not available'); return; }
+  Java.perform(() => {
+    try {
+      const ActivityThread = Java.use('android.app.ActivityThread');
+      const activities = ActivityThread.currentActivityThread().mActivities.value;
+      let activity = null;
+      const it = activities.values().iterator();
+      while (it.hasNext()) {
+        const record = Java.cast(it.next(), Java.use('android.app.ActivityThread$ActivityClientRecord'));
+        if (!record.paused.value) { activity = record.activity.value; break; }
+      }
+      if (activity === null) { console.log('[!] no resumed activity yet — retry after the game loads'); return; }
+
+      const LinearLayout = Java.use('android.widget.LinearLayout');
+      const Button = Java.use('android.widget.Button');
+      const ViewGroupLP = Java.use('android.view.ViewGroup$LayoutParams');
+      const Gravity = Java.use('android.view.Gravity');
+      const FrameLP = Java.use('android.widget.FrameLayout$LayoutParams');
+      const Color = Java.use('android.graphics.Color');
+
+      Java.scheduleOnMainThread(() => {
+        try {
+          const panel = LinearLayout.$new(activity);
+          panel.setOrientation(LinearLayout.VERTICAL.value);
+          panel.setBackgroundColor(Color.argb(140, 0, 0, 0));
+
+          for (const [key, meta] of Object.entries(KEYS)) {
+            const b = Button.$new(activity);
+            b.setText(`${meta.label} (${key})`);
+            b.setAllCaps(false);
+            b.setOnClickListener(Java.registerClass({
+              name: `pvzf.Click${key}`,
+              implements: [Java.use('android.view.View$OnClickListener')],
+              methods: { onClick(_v) { press(key); } },
+            }).$new());
+            panel.addView(b, ViewGroupLP.$new(ViewGroupLP.WRAP_CONTENT.value, ViewGroupLP.WRAP_CONTENT.value));
+          }
+
+          const lp = FrameLP.$new(ViewGroupLP.WRAP_CONTENT.value, ViewGroupLP.WRAP_CONTENT.value);
+          lp.gravity.value = Gravity.TOP.value | Gravity.START.value;
+          activity.addContentView(panel, lp);
+          console.log('[+] on-screen panel added');
+        } catch (e) {
+          console.log(`[!] could not add panel: ${e.message}`);
+        }
+      });
+    } catch (e) {
+      console.log(`[!] UI setup failed: ${e.message}`);
+    }
+  });
+}
+
+/* ---------- discovery (read-only) -------------------------------------- */
+
 const WANTED = /^(CheckCheatCodes|CheatKey|CheatKeys|CheatShoot|CheatHard)$/;
 
 function discover() {
@@ -113,66 +236,41 @@ function discover() {
   eachClass(klass => {
     const methods = methodsOf(klass);
     const hits = methods.filter(m => WANTED.test(m.name));
-    if (!hits.length) return;
-    const ns = str(il2cpp.class_get_namespace(klass));
-    found.push({
-      klass,
-      name: (ns && ns !== '<null>' ? ns + '.' : '') + str(il2cpp.class_get_name(klass)),
-      hits,
-      methods,
-      fields: fieldsOf(klass),
-    });
+    if (hits.length) found.push({ name: fullName(klass), hits, methods, fields: fieldsOf(klass) });
   });
-
   if (!found.length) {
-    console.log('[!] No cheat methods found. Either the game has not finished');
-    console.log('    loading (wait a few seconds and re-run discover()), or this');
-    console.log('    build renamed them — run dumpClass("<partial name>") to look.');
+    console.log('[!] cheat methods not found yet — if the game is still loading, re-run discover()');
     return found;
   }
-
   for (const c of found) {
     console.log(`\n=== ${c.name} ===`);
-    console.log('  cheat methods:');
-    for (const m of c.hits) console.log(`    ${m.name}(${m.argc} args)`);
-    const interesting = c.methods.filter(m => m.argc === 0 && !WANTED.test(m.name)).slice(0, 40);
-    console.log(`  other 0-arg methods (callable): ${interesting.map(m => m.name).join(', ')}`);
-    console.log(`  fields: ${c.fields.join(', ')}`);
+    console.log('  cheat methods: ' + c.hits.map(m => `${m.name}/${m.argc}`).join(', '));
+    console.log('  0-arg methods: ' + c.methods.filter(m => m.argc === 0).map(m => m.name).slice(0, 40).join(', '));
+    console.log('  fields:        ' + c.fields.join(', '));
   }
-  console.log('\nNext: call(<class>, <method>) to invoke a 0-arg method.');
   return found;
 }
 
-/** Invoke a zero-argument static/instance-less method by name. */
+/** Invoke a zero-argument method by class and name. */
 function call(className, methodName) {
   attach();
-  let done = false;
-  eachClass(klass => {
-    if (done) return;
-    const ns = str(il2cpp.class_get_namespace(klass));
-    const full = (ns && ns !== '<null>' ? ns + '.' : '') + str(il2cpp.class_get_name(klass));
-    if (full !== className) return;
-    const m = il2cpp.method_from_name(klass, Memory.allocUtf8String(methodName), 0);
-    if (m.isNull()) { console.log(`[!] ${className} has no 0-arg ${methodName}`); done = true; return; }
-    const exc = Memory.alloc(Process.pointerSize);
-    exc.writePointer(NULL);
-    il2cpp.runtime_invoke(m, NULL, NULL, exc);
-    console.log(exc.readPointer().isNull()
-      ? `[+] called ${className}.${methodName}`
-      : `[!] ${className}.${methodName} threw a managed exception`);
-    done = true;
-  });
-  if (!done) console.log(`[!] class not found: ${className}`);
+  const klass = findClass(className);
+  if (klass === null) { console.log(`[!] class not found: ${className}`); return; }
+  const m = il2cpp.method_from_name(klass, Memory.allocUtf8String(methodName), 0);
+  if (m.isNull()) { console.log(`[!] ${className} has no 0-arg ${methodName}`); return; }
+  const exc = Memory.alloc(Process.pointerSize); exc.writePointer(NULL);
+  il2cpp.runtime_invoke(m, NULL, NULL, exc);
+  console.log(exc.readPointer().isNull()
+    ? `[+] called ${className}.${methodName}`
+    : `[!] ${className}.${methodName} threw a managed exception`);
 }
 
-/** Print every method and field of classes whose name contains `needle`. */
 function dumpClass(needle) {
   attach();
   eachClass(klass => {
-    const name = str(il2cpp.class_get_name(klass));
+    const name = fullName(klass);
     if (!name.toLowerCase().includes(needle.toLowerCase())) return;
-    const ns = str(il2cpp.class_get_namespace(klass));
-    console.log(`\n=== ${(ns && ns !== '<null>' ? ns + '.' : '') + name} ===`);
+    console.log(`\n=== ${name} ===`);
     console.log('  methods: ' + methodsOf(klass).map(m => `${m.name}/${m.argc}`).join(', '));
     console.log('  fields:  ' + fieldsOf(klass).join(', '));
   });
@@ -182,19 +280,19 @@ function dumpClass(needle) {
 
 function start() {
   il2cpp = bind();
-  console.log('[*] libil2cpp bound. Running discovery…');
+  console.log('[*] libil2cpp bound');
+  hookInput();
   discover();
-  // Exposed so you can drive it from the Frida REPL:
-  //   call("SomeClass", "CheckCheatCodes")
-  //   dumpClass("Board")
-  globalThis.discover = discover;
-  globalThis.call = call;
-  globalThis.dumpClass = dumpClass;
+  console.log('\nREPL:');
+  console.log('  press("Y")   queue a keypress   (Y clear zombies, U clear plants, O seeds, I vase)');
+  console.log('  ui()         add the on-screen panel (run once the game is in a level)');
+  console.log('  discover()   re-scan            call(cls, m)   dumpClass(needle)');
+  Object.assign(globalThis, { press, ui: buildUI, discover, call, dumpClass, KEYS });
 }
 
-// With -f the process is spawned suspended and libil2cpp is not mapped yet.
+// With -f the process spawns suspended and libil2cpp is not mapped yet.
 (function waitForLib(tries) {
   if (Module.findBaseAddress(LIB) !== null) { start(); return; }
   if (tries <= 0) { console.log(`[!] ${LIB} never appeared`); return; }
   setTimeout(() => waitForLib(tries - 1), 250);
-})(120);
+})(160);

@@ -17,15 +17,16 @@ build is a single level (`此关卡仅对PC端开放`). `CheckCheatCodes` reads 
 `keyCodes` array, and a phone has no keys to read. The code is there; the input
 path is not.
 
-## Try the free option first
+## No keyboard needed
 
-**Attach a Bluetooth or OTG keyboard and press Y.** Unity reads hardware
-keyboards on Android and nothing here checks the platform.
+A Bluetooth or OTG keyboard would reach these directly, but the script does the
+same thing in software: it hooks `UnityEngine.Input.GetKeyDown` so a chosen key
+reads as pressed for exactly one frame, on demand. The game's own handler runs
+unchanged, so nothing depends on knowing what the cheat code does internally.
 
-Do this before anything else. It costs five minutes and answers the question
-everything else depends on: *do these code paths actually run on Android?* If
-they fire with a keyboard, a menu is worth building. If they don't, a menu would
-have nothing to call.
+That also makes the first run the test. If `press("Y")` clears the zombies, the
+cheat paths are live on Android. If it does nothing, they are compiled in but
+inert, and no menu of any kind would have helped.
 
 ## The Frida route (needs root)
 
@@ -45,13 +46,19 @@ It runs a **read-only discovery pass** first and prints the class that owns
 before invoking anything — the script reports real signatures rather than
 assuming them.
 
-Then from the Frida REPL:
+On start it hooks input, runs a read-only discovery pass, and prints what it
+found. Then, from the REPL:
 
 ```js
-call("<TheClass>", "CheckCheatCodes")   // invoke a 0-arg method
-dumpClass("Board")                      // list methods/fields of matching classes
-discover()                              // re-run if the game was still loading
+press("Y")     // clear zombies   (U plants, O random seeds, I place vase)
+ui()           // add the on-screen button panel - run once you are in a level
+discover()     // re-scan if the game was still loading
+call(cls, m)   // invoke a 0-arg method      dumpClass(needle)
 ```
+
+`ui()` adds buttons to the game's **own Activity view**, not a system overlay,
+so `SYSTEM_ALERT_WINDOW` is never involved. Each button just queues a keypress,
+so the panel is a front-end for the same path `press()` uses.
 
 Everything resolves **by name**, never by address. A game update moves every
 offset but rarely renames a method, so this should survive version bumps — which
