@@ -278,6 +278,29 @@ function dumpClass(needle) {
 
 /* ---------- entry ------------------------------------------------------ */
 
+/*
+ * Embedded in the APK (Frida Gadget) there is no REPL to type `ui()` into, so
+ * the panel has to add itself. The Activity does not exist yet at library-load
+ * time, so this retries until one is resumed and then stops.
+ */
+let uiAdded = false;
+function autoUI(tries) {
+  if (uiAdded || tries <= 0) return;
+  try {
+    Java.perform(() => {
+      const ActivityThread = Java.use('android.app.ActivityThread');
+      const activities = ActivityThread.currentActivityThread().mActivities.value;
+      const it = activities.values().iterator();
+      while (it.hasNext()) {
+        const rec = Java.cast(it.next(), Java.use('android.app.ActivityThread$ActivityClientRecord'));
+        if (!rec.paused.value) { uiAdded = true; break; }
+      }
+    });
+  } catch (e) { /* Java not ready yet */ }
+  if (uiAdded) { buildUI(); return; }
+  setTimeout(() => autoUI(tries - 1), 1000);
+}
+
 function start() {
   il2cpp = bind();
   console.log('[*] libil2cpp bound');
@@ -288,6 +311,7 @@ function start() {
   console.log('  ui()         add the on-screen panel (run once the game is in a level)');
   console.log('  discover()   re-scan            call(cls, m)   dumpClass(needle)');
   Object.assign(globalThis, { press, ui: buildUI, discover, call, dumpClass, KEYS });
+  autoUI(120);  // harmless when driven from a REPL: ui() just happens on its own
 }
 
 // With -f the process spawns suspended and libil2cpp is not mapped yet.

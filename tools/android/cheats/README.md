@@ -28,7 +28,44 @@ That also makes the first run the test. If `press("Y")` clears the zombies, the
 cheat paths are live on Android. If it does nothing, they are compiled in but
 inert, and no menu of any kind would have helped.
 
-## The Frida route (needs root)
+## Just install and play (no PC, no root)
+
+`embed_cheats.py` bakes the script into the APK, so there is nothing to attach
+to and nothing to run each session — install it, launch the game, the buttons
+are there.
+
+```bash
+tools/.venv/Scripts/python.exe tools/android/cheats/embed_cheats.py     --apk dist/pvzf-pvzrh3.8.1-english.apk --out dist     --keystore tools/android/signing/pvzf-release.jks --ks-alias pvzf     --ks-pass "$(cat tools/android/signing/keystore-password.txt)"     --key-pass "$(cat tools/android/signing/keystore-password.txt)"
+```
+
+Frida Gadget is the same engine as `frida-server`, but as an ordinary shared
+library that runs a script from inside the app. Three files go in per ABI:
+
+```
+lib/<abi>/libfrida-gadget.so         the engine        (+18 MB total)
+lib/<abi>/libfrida-gadget.config.so  run our script, don't open a socket
+lib/<abi>/libpvzf-cheats.so          the script itself
+```
+
+The script is named `.so` deliberately: Android only unpacks `lib/<abi>/*.so`
+onto disk, and Gadget resolves relative config paths next to itself, so naming
+the JavaScript like a library is what puts it somewhere Gadget can read.
+
+Loading is done by adding the gadget to `libmain.so`'s **DT_NEEDED** list, so the
+dynamic linker pulls it in when Unity's own bootstrap library loads. That needs
+no `classes.dex` edit and no manifest change — the game data, metadata and
+manifest come out byte-identical to the translated APK.
+
+Signed with the same key, so it installs straight over your existing build and
+keeps the save. Gadget in `script` mode never opens a port, and runs in the app's
+own process, so **root is not required** for this route.
+
+**Untested on hardware.** The structure is verified — both `libmain.so` files
+still parse as valid ELF with the gadget first in DT_NEEDED — but if the gadget
+fails to load, the linker aborts and the game will not start. Keep the plain
+translated APK to reinstall over it if that happens.
+
+## Driving it from a PC instead (needs root)
 
 `frida-il2cpp-bridge` is not required — `libil2cpp.so` exports the whole IL2CPP C
 API (all 18 functions this script needs), so `pvzf-cheats.js` is self-contained.

@@ -10,3 +10,6 @@ work/
 android/signing/*.jks
 android/signing/*.keystore
 android/signing/*password*
+
+# Frida Gadget binaries fetched by embed_cheats.py
+android/vendor/gadget/
