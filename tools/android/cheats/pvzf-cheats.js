@@ -35,6 +35,10 @@ const KEYS = {
   I: { code: 105, label: 'Place Vase' },
 };
 
+/* Everything prints with one tag so `adb logcat | grep pvzf` shows the whole
+   startup path — which stage reached, which failed, and why. */
+function log(msg) { console.log('[pvzf] ' + msg); }
+
 let il2cpp = null;
 let attached = false;
 /* Keys queued to read as "pressed". Consumed by the first matching call. */
@@ -173,56 +177,91 @@ function press(key) {
  * Added to the Activity's own content view rather than as a system overlay, so
  * no SYSTEM_ALERT_WINDOW permission is involved.
  */
+/* Registered once — Java.registerClass throws if the same name is used twice. */
+let ClickListener = null;
+function clickListenerFor(key) {
+  if (ClickListener === null) {
+    ClickListener = Java.registerClass({
+      name: 'pvzf.CheatClick',
+      implements: [Java.use('android.view.View$OnClickListener')],
+      fields: { which: 'java.lang.String' },
+      methods: { onClick(_v) { press(this.which.value); } },
+    });
+  }
+  const l = ClickListener.$new();
+  l.which.value = key;
+  return l;
+}
+
+/**
+ * Find the current Activity. `ActivityClientRecord.paused` does not exist on
+ * every Android version, so fall back to "any activity we can see" rather than
+ * failing outright.
+ */
+function currentActivity() {
+  const ActivityThread = Java.use('android.app.ActivityThread');
+  const records = ActivityThread.currentActivityThread().mActivities.value;
+  const Record = Java.use('android.app.ActivityThread$ActivityClientRecord');
+  let fallback = null;
+  const it = records.values().iterator();
+  while (it.hasNext()) {
+    const rec = Java.cast(it.next(), Record);
+    const activity = rec.activity.value;
+    if (activity === null) continue;
+    fallback = fallback || activity;
+    try { if (!rec.paused.value) return activity; } catch (_) { return activity; }
+  }
+  return fallback;
+}
+
 function buildUI() {
-  if (!Java.available) { console.log('[!] Java runtime not available'); return; }
+  if (!Java.available) { log('Java runtime not available'); return; }
   Java.perform(() => {
+    let activity;
     try {
-      const ActivityThread = Java.use('android.app.ActivityThread');
-      const activities = ActivityThread.currentActivityThread().mActivities.value;
-      let activity = null;
-      const it = activities.values().iterator();
-      while (it.hasNext()) {
-        const record = Java.cast(it.next(), Java.use('android.app.ActivityThread$ActivityClientRecord'));
-        if (!record.paused.value) { activity = record.activity.value; break; }
-      }
-      if (activity === null) { console.log('[!] no resumed activity yet — retry after the game loads'); return; }
+      activity = currentActivity();
+    } catch (e) { log(`activity lookup failed: ${e.message}`); return; }
+    if (!activity) { log('no activity yet'); return; }
+    log(`activity: ${activity.$className}`);
 
-      const LinearLayout = Java.use('android.widget.LinearLayout');
-      const Button = Java.use('android.widget.Button');
-      const ViewGroupLP = Java.use('android.view.ViewGroup$LayoutParams');
-      const Gravity = Java.use('android.view.Gravity');
-      const FrameLP = Java.use('android.widget.FrameLayout$LayoutParams');
-      const Color = Java.use('android.graphics.Color');
+    const LinearLayout = Java.use('android.widget.LinearLayout');
+    const Button = Java.use('android.widget.Button');
+    const ViewGroupLP = Java.use('android.view.ViewGroup$LayoutParams');
+    const Gravity = Java.use('android.view.Gravity');
+    const FrameLP = Java.use('android.widget.FrameLayout$LayoutParams');
+    const Color = Java.use('android.graphics.Color');
 
-      Java.scheduleOnMainThread(() => {
-        try {
-          const panel = LinearLayout.$new(activity);
-          panel.setOrientation(LinearLayout.VERTICAL.value);
-          panel.setBackgroundColor(Color.argb(140, 0, 0, 0));
+    Java.scheduleOnMainThread(() => {
+      try {
+        const panel = LinearLayout.$new(activity);
+        panel.setOrientation(LinearLayout.VERTICAL.value);
+        panel.setBackgroundColor(Color.argb(190, 0, 0, 0));
+        // Unity renders into a SurfaceView; without an explicit Z the panel can
+        // end up behind it on some devices.
+        try { panel.setElevation(1000.0); } catch (_) {}
 
-          for (const [key, meta] of Object.entries(KEYS)) {
-            const b = Button.$new(activity);
-            b.setText(`${meta.label} (${key})`);
-            b.setAllCaps(false);
-            b.setOnClickListener(Java.registerClass({
-              name: `pvzf.Click${key}`,
-              implements: [Java.use('android.view.View$OnClickListener')],
-              methods: { onClick(_v) { press(key); } },
-            }).$new());
-            panel.addView(b, ViewGroupLP.$new(ViewGroupLP.WRAP_CONTENT.value, ViewGroupLP.WRAP_CONTENT.value));
-          }
-
-          const lp = FrameLP.$new(ViewGroupLP.WRAP_CONTENT.value, ViewGroupLP.WRAP_CONTENT.value);
-          lp.gravity.value = Gravity.TOP.value | Gravity.START.value;
-          activity.addContentView(panel, lp);
-          console.log('[+] on-screen panel added');
-        } catch (e) {
-          console.log(`[!] could not add panel: ${e.message}`);
+        for (const key of Object.keys(KEYS)) {
+          const b = Button.$new(activity);
+          b.setText(`${KEYS[key].label} (${key})`);
+          b.setAllCaps(false);
+          b.setOnClickListener(clickListenerFor(key));
+          panel.addView(b, ViewGroupLP.$new(ViewGroupLP.WRAP_CONTENT.value,
+                                            ViewGroupLP.WRAP_CONTENT.value));
         }
-      });
-    } catch (e) {
-      console.log(`[!] UI setup failed: ${e.message}`);
-    }
+
+        const lp = FrameLP.$new(ViewGroupLP.WRAP_CONTENT.value, ViewGroupLP.WRAP_CONTENT.value);
+        lp.gravity.value = Gravity.TOP.value | Gravity.START.value;
+        // addContentView puts it in the content frame; the decor view sits above
+        // everything the app draws, which is what we want over a SurfaceView.
+        const decor = activity.getWindow().getDecorView();
+        Java.cast(decor, Java.use('android.view.ViewGroup')).addView(panel, lp);
+        panel.bringToFront();
+        uiAdded = true;
+        log('panel added');
+      } catch (e) {
+        log(`could not add panel: ${e.message}`);
+      }
+    });
   });
 }
 
@@ -285,26 +324,19 @@ function dumpClass(needle) {
  */
 let uiAdded = false;
 function autoUI(tries) {
-  if (uiAdded || tries <= 0) return;
-  try {
-    Java.perform(() => {
-      const ActivityThread = Java.use('android.app.ActivityThread');
-      const activities = ActivityThread.currentActivityThread().mActivities.value;
-      const it = activities.values().iterator();
-      while (it.hasNext()) {
-        const rec = Java.cast(it.next(), Java.use('android.app.ActivityThread$ActivityClientRecord'));
-        if (!rec.paused.value) { uiAdded = true; break; }
-      }
-    });
-  } catch (e) { /* Java not ready yet */ }
-  if (uiAdded) { buildUI(); return; }
-  setTimeout(() => autoUI(tries - 1), 1000);
+  if (uiAdded) return;
+  if (tries <= 0) { log('gave up adding the panel'); return; }
+  // buildUI sets uiAdded only once the view is actually attached, so a failure
+  // here keeps retrying instead of latching on a half-success.
+  try { buildUI(); } catch (e) { log(`autoUI: ${e.message}`); }
+  if (!uiAdded) setTimeout(() => autoUI(tries - 1), 1000);
 }
 
 function start() {
-  il2cpp = bind();
-  console.log('[*] libil2cpp bound');
-  hookInput();
+  log('script running — gadget loaded and config was read');
+  try { il2cpp = bind(); } catch (e) { log(`FATAL binding libil2cpp: ${e.message}`); return; }
+  log('libil2cpp bound');
+  try { hookInput(); } catch (e) { log(`input hook failed: ${e.message}`); }
   discover();
   console.log('\nREPL:');
   console.log('  press("Y")   queue a keypress   (Y clear zombies, U clear plants, O seeds, I vase)');
@@ -317,6 +349,6 @@ function start() {
 // With -f the process spawns suspended and libil2cpp is not mapped yet.
 (function waitForLib(tries) {
   if (Module.findBaseAddress(LIB) !== null) { start(); return; }
-  if (tries <= 0) { console.log(`[!] ${LIB} never appeared`); return; }
+  if (tries <= 0) { log(`${LIB} never appeared — game may not have finished loading`); return; }
   setTimeout(() => waitForLib(tries - 1), 250);
 })(160);

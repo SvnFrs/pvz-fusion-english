@@ -136,3 +136,47 @@ code in `libil2cpp.so`, and is not worth it while the above works.
 An ImGui menu is genuinely feasible — a native `.so` plus a custom `Application`
 class to load it — but it is a multi-day C++/NDK project, and Frida gets you the
 same access today without touching the APK.
+
+## If the panel does not appear
+
+Nothing here can be diagnosed from the PC side — the answer is on the device.
+The script tags every line, so one command tells you which stage was reached:
+
+```bash
+adb logcat -c
+# launch the game, then:
+adb logcat | grep -iE "pvzf|frida|Gadget"
+```
+
+Read the first line you get:
+
+| What you see | What it means |
+| --- | --- |
+| `[pvzf] script running` | Gadget loaded and found the script. Any failure after this is the script's, and the next lines say which. |
+| `[pvzf] libil2cpp.so never appeared` | Gadget ran too early or the game did not finish loading. |
+| `[pvzf] no activity yet` repeatedly | The Java side cannot see an Activity; the retry keeps going for two minutes. |
+| `[pvzf] could not add panel: …` | The view failed to attach — the message names the cause. |
+| Frida/Gadget lines but no `[pvzf]` | The gadget loaded but could not read the script. Most likely Android did not unpack `libpvzf-cheats.so`. |
+| **nothing at all** | The gadget never loaded. Check it is on disk (below). |
+
+Confirm what actually got unpacked onto the device:
+
+```bash
+adb shell run-as com.LanPiaoPiao.PlantsVsZombiesRH ls -l /data/data/com.LanPiaoPiao.PlantsVsZombiesRH/lib/
+# or, with root:
+adb shell su -c 'ls -l /data/app/*PlantsVsZombiesRH*/lib/arm64/'
+```
+
+You want three files there: `libfrida-gadget.so`, `libfrida-gadget.config.so`
+and `libpvzf-cheats.so`. If the first two are present and the third is not,
+Android declined to unpack a non-ELF file named `.so` — that is the known weak
+point of this approach, and the fix is to keep the script somewhere else and
+point `path` in the config at it (with root, `/data/local/tmp/pvzf-cheats.js`
+works and only has to be pushed once).
+
+A useful property while debugging: the game **starting normally at all** proves
+the gadget loaded. If `libfrida-gadget.so` were missing or unloadable the
+dynamic linker would fail `libmain.so`, and the game would not launch — and if
+the gadget loaded but found no config it would default to Listen mode and hang
+at startup waiting for a debugger. So a game that plays normally but shows no
+panel means the gadget loaded *and* read the config; the problem is later.
