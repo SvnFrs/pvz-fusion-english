@@ -56,6 +56,14 @@ dynamic linker pulls it in when Unity's own bootstrap library loads. That needs
 no `classes.dex` edit and no manifest change — the game data, metadata and
 manifest come out byte-identical to the translated APK.
 
+> **This is the part most likely to be wrong.** As a link-time dependency, the
+> gadget's constructor runs *inside the dynamic linker*, holding the linker
+> lock, while Gadget's own startup spawns threads and calls `dlopen`. Every
+> working Android gadget injector uses `System.loadLibrary("frida-gadget")` from
+> Java instead — injected into `<clinit>` or `onCreate` by rewriting
+> `classes.dex`. If the parse-time log below never appears, that is the reason,
+> and DEX injection is the fix.
+
 Signed with the same key, so it installs straight over your existing build and
 keeps the save. Gadget in `script` mode never opens a port, and runs in the app's
 own process, so **root is not required** for this route.

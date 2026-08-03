@@ -88,6 +88,17 @@ function toast(msg) {
   } catch (e) { log(`toast setup failed: ${e.message}`); }
 }
 
+/*
+ * Proof of life, written at parse time.
+ *
+ * This used to live inside start(), which only runs once libil2cpp.so shows up
+ * — so if that wait ever failed there was no log at all, and "no log" could not
+ * be told apart from "script never loaded". Now the file appears the instant
+ * Gadget reads this script, whatever happens afterwards.
+ */
+openLog();
+log('script parsed — Gadget loaded and ran this file');
+
 let il2cpp = null;
 let attached = false;
 /* Keys queued to read as "pressed". Consumed by the first matching call. */
@@ -388,8 +399,7 @@ function autoUI(tries) {
 }
 
 function start() {
-  openLog();
-  log('script running — gadget loaded and config was read');
+  log('start() — libil2cpp is up');
   // Proof of life that needs no tools: if you see this, everything after it is
   // a script problem, not an injection problem.
   toast('PvZF cheats: script loaded');

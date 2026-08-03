@@ -51,7 +51,7 @@ GADGET_CONFIG = {
     # `script` means: run this and exit setup. The default mode instead opens a
     # listening socket and waits for a debugger, which is the opposite of what a
     # self-contained build wants.
-    "interaction": {"type": "script", "path": "./" + SCRIPT, "on_change": "reload"}
+    "interaction": {"type": "script", "path": SCRIPT, "on_change": "reload"}
 }
 
 
