@@ -6,6 +6,21 @@ That is what this file is for. Read it top to bottom before running anything.
 
 ---
 
+## Where things stand
+
+| | |
+| --- | --- |
+| **Android English build** | working — `tools/android/build_apk.py`, ~60s from a Chinese APK |
+| **PC build** | working — `tools/pc/build_pc.py` |
+| **English translation** | 64% of the 4,695 strings the game ships (was 45%) |
+| **Translation audit** | `Docs/translation-audit/`, regenerate after any game update |
+| **Almanac** | working — `tools/almanac/build_almanac.py`, released |
+| **Signing key** | generated, permanent, in `tools/android/signing/` — **back it up** |
+| **In-game cheat menu** | **parked.** Embedded Frida Gadget does not work; see `tools/android/cheats/README.md` for the evidence and the next thing to try |
+
+If you are picking this up cold, read §1–§3 below; nothing here needs the cheat
+work to be finished.
+
 ## 0. What you have been given
 
 One of:
