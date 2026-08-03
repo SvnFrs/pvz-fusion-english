@@ -35,9 +35,58 @@ const KEYS = {
   I: { code: 105, label: 'Place Vase' },
 };
 
-/* Everything prints with one tag so `adb logcat | grep pvzf` shows the whole
-   startup path — which stage reached, which failed, and why. */
-function log(msg) { console.log('[pvzf] ' + msg); }
+/*
+ * Diagnostics without a PC.
+ *
+ * logcat needs adb, and adb needs installing something. Instead every line goes
+ * to a file you can open in any file manager, and the important ones also show
+ * as a Toast — so the game itself tells you whether the script is alive, with
+ * no tooling at all.
+ */
+const PKG = 'com.LanPiaoPiao.PlantsVsZombiesRH';
+const LOG_PATHS = [
+  `/storage/emulated/0/Android/data/${PKG}/files/pvzf-cheats.log`,
+  `/data/data/${PKG}/files/pvzf-cheats.log`,
+];
+let logFile = null;
+
+function openLog() {
+  for (const path of LOG_PATHS) {
+    try {
+      const f = new File(path, 'a');
+      f.write(`\n--- ${new Date().toISOString()} ---\n`);
+      f.flush();
+      logFile = f;
+      console.log('[pvzf] logging to ' + path);
+      return;
+    } catch (_) { /* try the next location */ }
+  }
+}
+
+function log(msg) {
+  console.log('[pvzf] ' + msg);
+  if (logFile !== null) {
+    try { logFile.write(msg + '\n'); logFile.flush(); } catch (_) { logFile = null; }
+  }
+}
+
+/** A Toast is visible with no tools and survives being drawn over by Unity. */
+function toast(msg) {
+  if (!Java.available) return;
+  try {
+    Java.perform(() => {
+      const ActivityThread = Java.use('android.app.ActivityThread');
+      const ctx = ActivityThread.currentApplication().getApplicationContext();
+      const Toast = Java.use('android.widget.Toast');
+      const CharSequence = Java.use('java.lang.CharSequence');
+      Java.scheduleOnMainThread(() => {
+        try {
+          Toast.makeText(ctx, Java.cast(Java.use('java.lang.String').$new(msg), CharSequence), 1).show();
+        } catch (e) { log(`toast failed: ${e.message}`); }
+      });
+    });
+  } catch (e) { log(`toast setup failed: ${e.message}`); }
+}
 
 let il2cpp = null;
 let attached = false;
@@ -258,8 +307,10 @@ function buildUI() {
         panel.bringToFront();
         uiAdded = true;
         log('panel added');
+        toast('PvZF cheats: buttons ready');
       } catch (e) {
         log(`could not add panel: ${e.message}`);
+        toast('PvZF cheats: panel failed — ' + e.message);
       }
     });
   });
@@ -325,7 +376,11 @@ function dumpClass(needle) {
 let uiAdded = false;
 function autoUI(tries) {
   if (uiAdded) return;
-  if (tries <= 0) { log('gave up adding the panel'); return; }
+  if (tries <= 0) {
+    log('gave up adding the panel');
+    toast('PvZF cheats: no panel, but press() still works');
+    return;
+  }
   // buildUI sets uiAdded only once the view is actually attached, so a failure
   // here keeps retrying instead of latching on a half-success.
   try { buildUI(); } catch (e) { log(`autoUI: ${e.message}`); }
@@ -333,7 +388,11 @@ function autoUI(tries) {
 }
 
 function start() {
+  openLog();
   log('script running — gadget loaded and config was read');
+  // Proof of life that needs no tools: if you see this, everything after it is
+  // a script problem, not an injection problem.
+  toast('PvZF cheats: script loaded');
   try { il2cpp = bind(); } catch (e) { log(`FATAL binding libil2cpp: ${e.message}`); return; }
   log('libil2cpp bound');
   try { hookInput(); } catch (e) { log(`input hook failed: ${e.message}`); }

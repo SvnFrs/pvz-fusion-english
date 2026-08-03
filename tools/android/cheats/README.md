@@ -139,7 +139,30 @@ same access today without touching the APK.
 
 ## If the panel does not appear
 
-Nothing here can be diagnosed from the PC side — the answer is on the device.
+**No PC or adb needed.** The script announces itself with a Toast and writes a
+log you can open in any file manager:
+
+```
+/storage/emulated/0/Android/data/com.LanPiaoPiao.PlantsVsZombiesRH/files/pvzf-cheats.log
+```
+
+(falling back to `/data/data/<pkg>/files/` if the app cannot write to external
+storage — readable with root).
+
+Launch the game and watch for a Toast in the first few seconds:
+
+| Toast | Meaning |
+| --- | --- |
+| **PvZF cheats: script loaded** | Injection worked. Anything wrong after this is the script, and the log says what. |
+| **PvZF cheats: buttons ready** | The panel attached. If you still cannot see it, Unity is drawing over it — use the log's `press()` notes. |
+| **PvZF cheats: panel failed — …** | The view could not attach; the message names the cause. |
+| **no Toast at all** | The script never ran. The gadget did not load, or could not read the script. |
+
+That last row is the important one — it separates "injection is broken" from
+"the UI is broken", which are completely different problems.
+
+### With adb, if you happen to have it
+
 The script tags every line, so one command tells you which stage was reached:
 
 ```bash
